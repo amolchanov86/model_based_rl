@@ -72,9 +72,6 @@ def rollout(x_0, f_fn, G_fn, u_seq, delta_t):
                     print('%s: %s \n' %(key, str(value)))
                 raise ValueError("QuadrotorEnv ERROR: SVD did not converge: " + str(e))
         x[6:15] = rot.flatten()
-
-        # print("dtF:", delta_t * f_fn(x, dt=delta_t))
-        # print("dtGu:", delta_t * G_fn(x) @ u)
     return x_out
 
 
@@ -131,11 +128,13 @@ def mppi_step(f_fn, G_fn, q_fn, R, rho, nu, lamd, delta_t, x_0, u_seq, K):
         return q_fn(x)
 
     # Iterating through trajectories
+    trajectories = []
     for i in range(K):
         u_perturbed = u_seq + dus[i]
         x_seq = rollout(x_0, f_fn, G_fn, u_perturbed, delta_t)
         #Computing costs-to-go for each trajectory
         S[i] = S_tilde(q_tilde_fn, x_seq, u_seq, dus[i]) #S.shape == (K,N)
+        trajectories.append(x_seq)
 
     # Computing weights for trajectories
     expS = np.exp((-1.0/lamd) * S) # (K, N) = (traj_num,timelen)
@@ -146,7 +145,7 @@ def mppi_step(f_fn, G_fn, q_fn, R, rho, nu, lamd, delta_t, x_0, u_seq, K):
     u_change_unscaled = np.sum(du_weighted, axis=0) # (N, udim): averaging among traj.
     u_change = u_change_unscaled / denom[:,None] # (N, udim)
 
-    return u_seq + u_change
+    return u_seq + u_change, trajectories
 
 
 
@@ -363,7 +362,7 @@ def mppi_test():
     # inverse variance of noise relative to control
     # if large, we generate small noise to system
     # rho = 1e-1
-    rho = 100 * 1e-1
+    rho = 1.
 
     # PSD quadratic form matrix of control cost
     #R = 1e-1 * np.eye(2)
@@ -415,7 +414,7 @@ def mppi_test():
         if render and (t % render_each == 0): env.render()
 
         # Computing control sequence
-        u_seq = mppi_step(env.dynamics.F, env.dynamics.G, q, R, rho, nu, lamd, delta_t, s, u_seq, K)
+        u_seq, mppi_traj = mppi_step(env.dynamics.F, env.dynamics.G, q, R, rho, nu, lamd, delta_t, s, u_seq, K)
 
         # Running env step
         s, r, done, info = env.step(u_seq[0,:])
@@ -432,7 +431,9 @@ def mppi_test():
             ax.set_zlim([0,plot_xyzlim])
             ax.scatter(s[-3],s[-2],s[-1], s=25, c="g", marker="o")
             ax.scatter([s[0]],[s[1]],[s[2]], s=25, c="r", marker="^")
-            plt.plot(s_horizon[:,0], s_horizon[:,1], s_horizon[:,2])
+            ax.plot(s_horizon[:,0], s_horizon[:,1], s_horizon[:,2])
+            for i in range(K):
+                ax.plot(mppi_traj[i][:,0], mppi_traj[i][:,1], mppi_traj[i][:,2], linewidth=0.1)
 
             plt.draw()
             plt.pause(0.05)
