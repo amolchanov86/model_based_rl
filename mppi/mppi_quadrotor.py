@@ -153,108 +153,108 @@ def mppi_step(f_fn, G_fn, q_fn, R, rho, nu, lamd, delta_t, x_0, u_seq, K):
 #######################################
 ## QUADROTOR DYNAMICS
 # assuming state [xyz, V, R, Omeage, xyz_goal]
+# Since dynamics is encapsulated insed QuadrotorEnv
+# I don't use this dynamics class anymore
+# I left it here to show how dynamics is represented
 
-# unforced dynamics (integrator, damping_deceleration)
-def f(s, dt=0.01):
-    xyz  = s[0:3]
-    Vxyz = s[3:6]
-    rot = s[6:15].reshape([3,3])
-    omega = s[15:18]
-    goal = s[18:21]
+class QuadrotorDynamics(object):
+    def __init__(self):
+        ###############################
+        ## PARAMETERS
+        self.mass = 0.5
+        self.arm_length = 0.33 / 2.0
+        self.inertia = self.mass * npa(0.01, 0.01, 0.02)
+        self.thrust_to_weight = 2.0
+        self.vel_damp = 0.999
+        self.damp_omega = 0.015
+        self.torque_to_thrust=0.05
 
-    mass = 0.5
-    arm_length = 0.33 / 2.0
-    inertia = mass * npa(0.01, 0.01, 0.02)
-    thrust_to_weight = 2.0
+        self.thrust_max = GRAV * self.mass * self.thrust_to_weight / 4.0
+        self.torque_max = self.torque_to_thrust * self.thrust_max 
 
-    ###############################
-    ## Linear position change
-    dx = copy.deepcopy(Vxyz)
+        ###############################
+        # Auxiliarry matrices
+        self.thrust_sum_mx = np.zeros([3,4]) # [0,0,F_sum].T
+        self.thrust_sum_mx[2,:] = 1# [0,0,F_sum].T
+        self.scl = self.arm_length / norm([1.,1.,0.])
+        # Unscaled (normalized) propeller positions
+        self.prop_pos = self.scl * np.array([
+            [1.,  1., -1., -1.],
+            [1., -1., -1.,  1.],
+            [0.,  0.,  0.,  0.]]).T # row-wise easier with np
+        # unit: meters^2 ??? maybe wrong
+        self.prop_crossproducts = np.cross(self.prop_pos, [0., 0., 1.]).T
+        # 1 for props turning CCW, -1 for CW
+        self.prop_ccw = np.array([1., -1., 1., -1.]) # Rotations directions
+        self.prop_ccw_mx = np.zeros([3,4]) # Matrix allows using matrix multiplication
+        self.prop_ccw_mx[2,:] = self.prop_ccw 
 
-    ###############################
-    ## Linear velocity change
-    vel_damp = 0.999
-    dV = (vel_damp * Vxyz - Vxyz) / dt + np.array([0, 0, -GRAV])
+        #Prop crossproduct give torque directions
+        self.G_omega_thrust = self.thrust_max * self.prop_crossproducts # [3,4] @ [4,1]
+        # additional torques along z-axis caused by propeller rotations
+        self.G_omega_prop = self.torque_max * self.prop_ccw_mx  # [3,4] @ [4,1] = [3,1]
+        self.G_omega = (1.0 / self.inertia)[:,None] * (self.G_omega_thrust + self.G_omega_prop)
 
-    ###############################
-    ## Angular orientation change
-    damp_omega = 0.015
+    # unforced dynamics (integrator, damping_deceleration)
+    def F(self, s, dt):
+        xyz  = s[0:3]
+        Vxyz = s[3:6]
+        rot = s[6:15].reshape([3,3])
+        omega = s[15:18]
+        goal = s[18:21]
 
-    omega_vec = np.matmul(rot, omega) # Change from body2world frame
-    wx, wy, wz = omega_vec
-    omega_mat_deriv = np.array([[0, -wz, wy], [wz, 0, -wx], [-wy, wx, 0]])
+        ###############################
+        ## Linear position change
+        dx = copy.deepcopy(Vxyz)
 
-    # ROtation matrix derivative
-    dR = np.matmul(omega_mat_deriv, rot).flatten()
+        ###############################
+        ## Linear velocity change
+        dV = (self.vel_damp * Vxyz - Vxyz) / dt + np.array([0, 0, -GRAV])
 
-    ###############################
-    ## Angular rate change
-    C_omega = (1.0 / inertia) * (cross(-omega, inertia * omega))
-    omega_damp_quadratic = np.clip(damp_omega * omega ** 2, a_min=0.0, a_max=1.0)
-    dOmega = (1.0 - omega_damp_quadratic) * C_omega
-    print("PRED: dOmega passive: ", dOmega)
+        ###############################
+        ## Angular orientation change
+        omega_vec = np.matmul(rot, omega) # Change from body2world frame
+        wx, wy, wz = omega_vec
+        omega_mat_deriv = np.array([[0, -wz, wy], [wz, 0, -wx], [-wy, wx, 0]])
 
-    ###############################
-    ## Goal change
-    dgoal = np.zeros_like(goal)
+        # ROtation matrix derivative
+        dR = np.matmul(omega_mat_deriv, rot).flatten()
 
-    return np.concatenate([dx, dV, dR, dOmega, dgoal])
+        ###############################
+        ## Angular rate change
+        F_omega = (1.0 / self.inertia) * (cross(-omega, self.inertia * omega))
+        omega_damp_quadratic = np.clip(self.damp_omega * omega ** 2, a_min=0.0, a_max=1.0)
+        dOmega = (1.0 - omega_damp_quadratic) * F_omega
+
+        ###############################
+        ## Goal change
+        dgoal = np.zeros_like(goal)
+
+        return np.concatenate([dx, dV, dR, dOmega, dgoal])
 
 
-# control affine dynamics (controlling acceleration only)
-def G(s):
-    xyz  = s[0:3]
-    Vxyz = s[3:6]
-    rot = s[6:15].reshape([3,3])
-    omega = s[15:18]
-    goal = s[18:21]
+    # control affine dynamics (controlling acceleration only)
+    # Output: [3,4]
+    def G(self, s):
+        xyz  = s[0:3]
+        Vxyz = s[3:6]
+        rot = s[6:15].reshape([3,3])
+        omega = s[15:18]
+        goal = s[18:21]
 
-    damp_omega = 0.015
-    mass = 0.5
-    arm_length = 0.33 / 2.0
-    inertia = mass * npa(0.01, 0.01, 0.02) # [3,1]
-    thrust_to_weight = 2.0
-    thrust_max = GRAV * mass * thrust_to_weight / 4.0
-    torque_to_thrust=0.05
-    torque_max = torque_to_thrust * thrust_max 
-    
-    ###############################
-    # Auxiliarry matrices
-    thrust_sum_mx = np.zeros([3,4]) # [0,0,F_sum].T
-    thrust_sum_mx[2,:] = 1# [0,0,F_sum].T
-    scl = arm_length / norm([1.,1.,0.])
-    # Unscaled (normalized) propeller positions
-    prop_pos = scl * np.array([
-        [1.,  1., -1., -1.],
-        [1., -1., -1.,  1.],
-        [0.,  0.,  0.,  0.]]).T # row-wise easier with np
-    # unit: meters^2 ??? maybe wrong
-    prop_crossproducts = np.cross(prop_pos, [0., 0., 1.]).T
-    # 1 for props turning CCW, -1 for CW
-    prop_ccw = np.array([1., -1., 1., -1.]) # Rotations directions
-    prop_ccw_mx = np.zeros([3,4]) # Matrix allows using matrix multiplication
-    prop_ccw_mx[2,:] = prop_ccw 
-
-    ###############################
-    ## dx, dV, dR, dgoal
-    dx = np.zeros([3,4])
-    dV = (rot / mass ) @ (thrust_max * thrust_sum_mx)
-    dR = np.zeros([9,4])
-    dgoal = np.zeros([3,4])
-    
-    ###############################
-    ## Angular acceleration
-    #Prop crossproduct give torque directions
-    C_thrust = thrust_max * prop_crossproducts # [3,4] @ [4,1]
-
-    # additional torques along z-axis caused by propeller rotations
-    C_prop = torque_max * prop_ccw_mx  # [3,4] @ [4,1] = [3,1]
-
-    omega_damp_quadratic = np.clip(damp_omega * omega ** 2, a_min=0.0, a_max=1.0)
-    dOmega = ((1.0 - omega_damp_quadratic) * (1.0 / inertia))[:,None] * (C_thrust + C_prop)
-    print("PRED: dOmega active: ", dOmega)
-    
-    return np.concatenate([dx, dV, dR, dOmega, dgoal], axis=0)
+        ###############################
+        ## dx, dV, dR, dgoal
+        dx = np.zeros([3,4])
+        dV = (rot / self.mass) @ (self.thrust_max * self.thrust_sum_mx)
+        dR = np.zeros([9,4])
+        dgoal = np.zeros([3,4])
+        
+        ###############################
+        ## Angular acceleration
+        omega_damp_quadratic = np.clip(self.damp_omega * omega ** 2, a_min=0.0, a_max=1.0)
+        dOmega = (1.0 - omega_damp_quadratic)[:,None] * self.G_omega
+        
+        return np.concatenate([dx, dV, dR, dOmega, dgoal], axis=0)
 
 
 """
@@ -267,18 +267,8 @@ Reward is distance from goal squared
 State: [xyz, Vxyz, R, Omega, Goal_xyz] = [3, 3, 9, 3, 3] = 21d
 """
 
-# import contextlib
-# @contextlib.contextmanager
-# def printoptions(*args, **kwargs):
-#     original = np.get_printoptions()
-#     np.set_printoptions(*args, **kwargs)
-#     try:
-#         yield
-#     finally: 
-#         np.set_printoptions(**original)
-
 def dynamics_test():
-
+    dynamics = QuadrotorDynamics()
     env = QuadrotorEnv(
         raw_control=False, 
         raw_control_zero_middle=False, 
@@ -310,8 +300,6 @@ def dynamics_test():
         fig = plt.figure(traj_fig_id)
         ax = fig.add_subplot(111, projection='3d') 
 
-        
-
     t = 0
     while True:
         s_real.append(s)
@@ -320,7 +308,6 @@ def dynamics_test():
         # Running env step
         s, r, done, info = env.step(np.array([0.,0.,0.,0.]))
         # Computing control sequence
-        # print("action: ", env.controller.action, "u_seq: ", u_seq.shape)
 
         # Breaking if the env is over
         if done: break
@@ -329,30 +316,14 @@ def dynamics_test():
 
 
     # Running prediction
-    s_pred = rollout(s_real[0], f, G, u_seq, delta_t)
+    s_pred = rollout(s_real[0], env.dynamics.F, env.dynamics.G, u_seq, delta_t)
     s_real = np.array(s_real)
 
-    # print("u: ", u_seq)
-    # print("s_pred: ", s_pred[:,6:15])
-    # for i in range(s_pred.shape[0]):
-    for i in range(50):
-        # with np.set_printoptions(precision=4, suppress=True):
+    for i in range(10):
         np.set_printoptions(formatter={'float': '{: 0.4f}'.format})
         print("pred:", s_pred[i, :])
         print("real:", s_real[i, :])
         print("\n")
-        # print("pred norm:", 
-        #     np.linalg.norm(s_pred[i,6:9]), 
-        #     np.linalg.norm(s_pred[i,9:12]), 
-        #     np.linalg.norm(s_pred[i,12:15]))
-
-        # print("real norm:", 
-        #     np.linalg.norm(s_real[i,6:9]), 
-        #     np.linalg.norm(s_real[i,9:12]), 
-        #     np.linalg.norm(s_real[i,12:15]))
-
-
-
 
     # Plotting trajectories
     if plot_figures:
@@ -370,6 +341,16 @@ def dynamics_test():
 
 
 def mppi_test():
+    # dynamics = QuadrotorDynamics()
+    env = QuadrotorEnv(
+        raw_control=True, 
+        raw_control_zero_middle=False, 
+        dim_mode='3D', 
+        tf_control=False, 
+        sim_steps=1,
+        ep_time=10)
+    s = env.reset()
+    N_u = env.action_space.low.shape[0]
 
     # arbitrary state-dependent cost, i.e.
     # no assumptions on the cost
@@ -382,11 +363,11 @@ def mppi_test():
     # inverse variance of noise relative to control
     # if large, we generate small noise to system
     # rho = 1e-1
-    rho = 1.
+    rho = 100 * 1e-1
 
     # PSD quadratic form matrix of control cost
     #R = 1e-1 * np.eye(2)
-    R = np.zeros((4,4))
+    R = np.zeros((N_u,N_u))
 
     # exploration weight. nu == 1.0 - no penalty for exploration
     # exploration cost = 0.5*(1-1/nu) * du^T * R * du
@@ -398,13 +379,13 @@ def mppi_test():
     lamd = 4e0
 
     # integration step
-    delta_t = 1.0 / 100.0
+    delta_t = env.dt * env.sim_steps
 
     # time horizon
     N = 20
 
     # initial control sequence
-    u_seq = 0.5 * np.ones((N, 4))
+    u_seq = 0.5 * np.ones((N, N_u))
 
     # number of trajectories to sample
     K = 100
@@ -415,43 +396,42 @@ def mppi_test():
 
     np.seterr(all="raise")
 
-    env = QuadrotorEnv(raw_control=True, raw_control_zero_middle=False, dim_mode='3D', tf_control=False, sim_steps=1)
-    env.max_episode_steps = 10000
-    s = env.reset()
     s_history = []
-    t = 0
     render = True
-    render_each = 1
+    render_each = 10
     traj_fig_id = 1
 
     plot_figures = True
+    plot_xyzlim = 2
+    plot_every = 5
     if plot_figures:
         fig = plt.figure(traj_fig_id)
         ax = fig.add_subplot(111, projection='3d') 
         plt.show(block=False)
 
+    t = 0
     while True:
         s_history.append(s)
         if render and (t % render_each == 0): env.render()
 
         # Computing control sequence
-        u_seq = mppi_step(f, G, q, R, rho, nu, lamd, delta_t, s, u_seq, K)
+        u_seq = mppi_step(env.dynamics.F, env.dynamics.G, q, R, rho, nu, lamd, delta_t, s, u_seq, K)
 
         # Running env step
         s, r, done, info = env.step(u_seq[0,:])
 
         # Running prediction
-        s_horizon = rollout(s, f, G, u_seq, delta_t)
+        s_horizon = rollout(s, env.dynamics.F, env.dynamics.G, u_seq, delta_t)
 
         # Plotting predicted trajectory
-        if plot_figures:
+        if plot_figures and t % plot_every == 0:
             fig = plt.figure(traj_fig_id)
             plt.cla()
-            ax.set_xlim([-10,10])
-            ax.set_ylim([-10,10])
-            ax.set_zlim([-10,10])
-            plt.scatter([0],[0],[0], c="g", marker="o")
-            plt.scatter([s[0]],[s[1]],[s[2]], c="r", marker="^")
+            ax.set_xlim([-plot_xyzlim,plot_xyzlim])
+            ax.set_ylim([-plot_xyzlim,plot_xyzlim])
+            ax.set_zlim([0,plot_xyzlim])
+            ax.scatter(s[-3],s[-2],s[-1], s=25, c="g", marker="o")
+            ax.scatter([s[0]],[s[1]],[s[2]], s=25, c="r", marker="^")
             plt.plot(s_horizon[:,0], s_horizon[:,1], s_horizon[:,2])
 
             plt.draw()
@@ -474,10 +454,10 @@ def main(argv):
     parser.add_argument(
         '-m',"--mode",
         type=int,
-        default=1,
+        default=0,
         help="Test mode: "
              "0 - MPPI"
-             # "1 - Test dynamics model"
+             "1 - Test dynamics model"
     )
     args = parser.parse_args()
 
