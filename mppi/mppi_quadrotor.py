@@ -49,9 +49,32 @@ def rollout(x_0, f_fn, G_fn, u_seq, delta_t):
     x_dim = x_0.shape[0]
     x_out = np.zeros((N, x_dim)) #trajectory, i.e. (timesteps, x_dim)
     x = 0 + x_0 #???
+    since_last_svd = 0
     for i, u in enumerate(u_seq):
         x_out[i] = x
-        x += delta_t * (f_fn(x) + G_fn(x) @ u)
+        x += delta_t * (f_fn(x, dt=delta_t) + G_fn(x) @ u)
+
+        # Occasionally orthogonalize the rotation matrix
+        # It is necessary, since integration falls apart over time, thus
+        # R matrix becomes non orthogonal (inconsistent)
+        rot = x[6:15].reshape([3,3])
+        since_last_svd += 1
+        if since_last_svd > 25:
+            try:
+                u, s, v = np.linalg.svd(rot)
+                rot = np.matmul(u, v)
+                since_last_svd = 0
+            except Exception as e:
+                print('Rotation Matrix: ', rot, ' actions: ', u)
+                log_error('##########################################################')
+                for key, value in locals().items():
+                    log_error('%s: %s \n' %(key, str(value)))
+                    print('%s: %s \n' %(key, str(value)))
+                raise ValueError("QuadrotorEnv ERROR: SVD did not converge: " + str(e))
+        x[6:15] = rot.flatten()
+
+        # print("dtF:", delta_t * f_fn(x, dt=delta_t))
+        # print("dtGu:", delta_t * G_fn(x) @ u)
     return x_out
 
 
@@ -151,7 +174,7 @@ def f(s, dt=0.01):
     ###############################
     ## Linear velocity change
     vel_damp = 0.999
-    dV = vel_damp / dt * Vxyz + np.array([0, 0, -GRAV])
+    dV = (vel_damp * Vxyz - Vxyz) / dt + np.array([0, 0, -GRAV])
 
     ###############################
     ## Angular orientation change
@@ -238,16 +261,26 @@ Controls are in the range [0 .. 1]
 Goal position is (0, 0)
 Control cost is identity
 Reward is distance from goal squared
-State: [x, y, dx, dy]
+State: [xyz, Vxyz, R, Omega, Goal_xyz] = [3, 3, 9, 3, 3] = 21d
 """
+
+# import contextlib
+# @contextlib.contextmanager
+# def printoptions(*args, **kwargs):
+#     original = np.get_printoptions()
+#     np.set_printoptions(*args, **kwargs)
+#     try:
+#         yield
+#     finally: 
+#         np.set_printoptions(**original)
 
 def dynamics_test():
 
-    env = QuadrotorEnv(raw_control=False, raw_control_zero_middle=False, dim_mode='3D', tf_control=False, sim_steps=1)
+    env = QuadrotorEnv(raw_control=False, raw_control_zero_middle=False, dim_mode='2D', tf_control=False, sim_steps=1)
     s = env.reset()
 
     # integration step
-    delta_t = env.dt
+    delta_t = env.dt * env.sim_steps
 
     # time horizon
     ep_len = env.ep_len
@@ -260,11 +293,11 @@ def dynamics_test():
     s_real = []
 
     render = True
-    render_each = 1
+    render_each = 10
 
     traj_fig_id = 1
     plot_figures = True
-    fig_lim = 5
+    fig_lim = 2
     if plot_figures:
         fig = plt.figure(traj_fig_id)
         ax = fig.add_subplot(111, projection='3d') 
@@ -291,6 +324,27 @@ def dynamics_test():
     s_pred = rollout(s_real[0], f, G, u_seq, delta_t)
     s_real = np.array(s_real)
 
+    # print("u: ", u_seq)
+    # print("s_pred: ", s_pred[:,6:15])
+    # for i in range(s_pred.shape[0]):
+    for i in range(50):
+        # with np.set_printoptions(precision=4, suppress=True):
+        np.set_printoptions(formatter={'float': '{: 0.4f}'.format})
+        print("pred:", s_pred[i, :6])
+        print("real:", s_real[i, :6])
+        print("\n")
+        # print("pred norm:", 
+        #     np.linalg.norm(s_pred[i,6:9]), 
+        #     np.linalg.norm(s_pred[i,9:12]), 
+        #     np.linalg.norm(s_pred[i,12:15]))
+
+        # print("real norm:", 
+        #     np.linalg.norm(s_real[i,6:9]), 
+        #     np.linalg.norm(s_real[i,9:12]), 
+        #     np.linalg.norm(s_real[i,12:15]))
+
+
+
 
     # Plotting trajectories
     if plot_figures:
@@ -301,7 +355,7 @@ def dynamics_test():
         plt.plot(s_pred[:,0], s_pred[:,1], s_pred[:,2], "r")
         ax.set_xlim([-fig_lim,fig_lim])
         ax.set_ylim([-fig_lim,fig_lim])
-        ax.set_zlim([-fig_lim,fig_lim])
+        ax.set_zlim([0,fig_lim])
         plt.pause(0.05)
         plt.show()
 
