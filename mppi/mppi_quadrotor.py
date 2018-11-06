@@ -192,6 +192,7 @@ def f(s, dt=0.01):
     C_omega = (1.0 / inertia) * (cross(-omega, inertia * omega))
     omega_damp_quadratic = np.clip(damp_omega * omega ** 2, a_min=0.0, a_max=1.0)
     dOmega = (1.0 - omega_damp_quadratic) * C_omega
+    print("PRED: dOmega passive: ", dOmega)
 
     ###############################
     ## Goal change
@@ -231,7 +232,8 @@ def G(s):
     prop_crossproducts = np.cross(prop_pos, [0., 0., 1.]).T
     # 1 for props turning CCW, -1 for CW
     prop_ccw = np.array([1., -1., 1., -1.]) # Rotations directions
-    prop_ccw_mx = np.zeros([3,4])[2,:] = prop_ccw # Matrix allows using matrix multiplication 
+    prop_ccw_mx = np.zeros([3,4]) # Matrix allows using matrix multiplication
+    prop_ccw_mx[2,:] = prop_ccw 
 
     ###############################
     ## dx, dV, dR, dgoal
@@ -250,6 +252,7 @@ def G(s):
 
     omega_damp_quadratic = np.clip(damp_omega * omega ** 2, a_min=0.0, a_max=1.0)
     dOmega = ((1.0 - omega_damp_quadratic) * (1.0 / inertia))[:,None] * (C_thrust + C_prop)
+    print("PRED: dOmega active: ", dOmega)
     
     return np.concatenate([dx, dV, dR, dOmega, dgoal], axis=0)
 
@@ -276,7 +279,12 @@ State: [xyz, Vxyz, R, Omega, Goal_xyz] = [3, 3, 9, 3, 3] = 21d
 
 def dynamics_test():
 
-    env = QuadrotorEnv(raw_control=False, raw_control_zero_middle=False, dim_mode='2D', tf_control=False, sim_steps=1)
+    env = QuadrotorEnv(
+        raw_control=False, 
+        raw_control_zero_middle=False, 
+        dim_mode='3D', 
+        tf_control=False, 
+        sim_steps=1)
     s = env.reset()
 
     # integration step
@@ -330,8 +338,8 @@ def dynamics_test():
     for i in range(50):
         # with np.set_printoptions(precision=4, suppress=True):
         np.set_printoptions(formatter={'float': '{: 0.4f}'.format})
-        print("pred:", s_pred[i, :6])
-        print("real:", s_real[i, :6])
+        print("pred:", s_pred[i, :])
+        print("real:", s_real[i, :])
         print("\n")
         # print("pred norm:", 
         #     np.linalg.norm(s_pred[i,6:9]), 
