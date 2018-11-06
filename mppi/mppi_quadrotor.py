@@ -37,6 +37,12 @@ import matplotlib.patches as patches
 
 GRAV = 9.81 #m/s^2
 
+## TODO:
+# - quadrotor parameters should be synchronized (including time sted delta_t)
+# - put functions f() and G() inside the env
+# - re-normalize predictions
+# - normalize actions
+
 
 def rollout(x_0, f_fn, G_fn, u_seq, delta_t):
     N = u_seq.shape[0] # u_seq.shape = (N,u_dim), where N = timesteps
@@ -234,6 +240,73 @@ Control cost is identity
 Reward is distance from goal squared
 State: [x, y, dx, dy]
 """
+
+def dynamics_test():
+
+    env = QuadrotorEnv(raw_control=False, raw_control_zero_middle=False, dim_mode='3D', tf_control=False, sim_steps=1)
+    s = env.reset()
+
+    # integration step
+    delta_t = env.dt
+
+    # time horizon
+    ep_len = env.ep_len
+    u_seq = np.zeros([ep_len, env.action_space.shape[0]])
+
+    np.random.seed(0)
+
+    np.seterr(all="raise")
+
+    s_real = []
+
+    render = True
+    render_each = 1
+
+    traj_fig_id = 1
+    plot_figures = True
+    fig_lim = 5
+    if plot_figures:
+        fig = plt.figure(traj_fig_id)
+        ax = fig.add_subplot(111, projection='3d') 
+
+        
+
+    t = 0
+    while True:
+        s_real.append(s)
+        if render and (t % render_each == 0): env.render()
+
+        # Running env step
+        s, r, done, info = env.step(np.array([0.,0.,0.,0.]))
+        # Computing control sequence
+        # print("action: ", env.controller.action, "u_seq: ", u_seq.shape)
+
+        # Breaking if the env is over
+        if done: break
+        u_seq[t,:] = env.controller.action
+        t += 1
+
+
+    # Running prediction
+    s_pred = rollout(s_real[0], f, G, u_seq, delta_t)
+    s_real = np.array(s_real)
+
+
+    # Plotting trajectories
+    if plot_figures:
+        fig = plt.figure(traj_fig_id)
+        plt.cla()
+        plt.scatter([0],[0],[0], c="g", marker="o")
+        plt.plot(s_real[:,0], s_real[:,1], s_real[:,2], "g")
+        plt.plot(s_pred[:,0], s_pred[:,1], s_pred[:,2], "r")
+        ax.set_xlim([-fig_lim,fig_lim])
+        ax.set_ylim([-fig_lim,fig_lim])
+        ax.set_zlim([-fig_lim,fig_lim])
+        plt.pause(0.05)
+        plt.show()
+
+
+
 def mppi_test():
 
     # arbitrary state-dependent cost, i.e.
@@ -246,7 +319,8 @@ def mppi_test():
 
     # inverse variance of noise relative to control
     # if large, we generate small noise to system
-    rho = 1e-1
+    # rho = 1e-1
+    rho = 1.
 
     # PSD quadratic form matrix of control cost
     #R = 1e-1 * np.eye(2)
@@ -286,6 +360,13 @@ def mppi_test():
     t = 0
     render = True
     render_each = 1
+    traj_fig_id = 1
+
+    plot_figures = True
+    if plot_figures:
+        fig = plt.figure(traj_fig_id)
+        ax = fig.add_subplot(111, projection='3d') 
+        plt.show(block=False)
 
     while True:
         s_history.append(s)
@@ -296,6 +377,23 @@ def mppi_test():
 
         # Running env step
         s, r, done, info = env.step(u_seq[0,:])
+
+        # Running prediction
+        s_horizon = rollout(s, f, G, u_seq, delta_t)
+
+        # Plotting predicted trajectory
+        if plot_figures:
+            fig = plt.figure(traj_fig_id)
+            plt.cla()
+            ax.set_xlim([-10,10])
+            ax.set_ylim([-10,10])
+            ax.set_zlim([-10,10])
+            plt.scatter([0],[0],[0], c="g", marker="o")
+            plt.scatter([s[0]],[s[1]],[s[2]], c="r", marker="^")
+            plt.plot(s_horizon[:,0], s_horizon[:,1], s_horizon[:,2])
+
+            plt.draw()
+            plt.pause(0.05)
 
         # Breaking if we reached the goal
         if np.linalg.norm(s[:3]) < 0.05 and np.linalg.norm(s[3:6]) < 0.1:
@@ -311,16 +409,20 @@ def mppi_test():
 def main(argv):
     # parser = argparse.ArgumentParser(formatter_class=argparse.RawTextHelpFormatter)
     parser = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
-    # parser.add_argument(
-    #     '-m',"--mode",
-    #     type=int,
-    #     default=0,
-    #     help="Test mode: "
-    #          "0 - fit mellinger control dynamics"
-    # )
+    parser.add_argument(
+        '-m',"--mode",
+        type=int,
+        default=1,
+        help="Test mode: "
+             "0 - MPPI"
+             # "1 - Test dynamics model"
+    )
     args = parser.parse_args()
 
-    mppi_test()
+    if args.mode == 0:
+        mppi_test()
+    if args.mode == 1:
+        dynamics_test()
 
 if __name__ == '__main__':
     main(sys.argv)
