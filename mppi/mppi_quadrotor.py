@@ -21,8 +21,8 @@ import gym.envs.registration as gym_reg
 import gym_art.quadrotor.rendering3d as r3d
 from gym_art.quadrotor.quadrotor_control import *
 from gym_art.quadrotor.quadrotor_modular import *
+from gym_art.quadrotor.quadrotor_affine import *
 
-#!/usr/bin/env python
 
 """
 Model Predictive Path Integral: example of a guided point mass
@@ -36,7 +36,7 @@ import matplotlib.pyplot as plt
 import matplotlib.patches as patches
 
 GRAV = 9.81 #m/s^2
-EPS = 1e-8
+EPS = 1e-15
 
 ## TODO:
 # - quadrotor parameters should be synchronized (including time sted delta_t)
@@ -113,13 +113,44 @@ def S_tilde(q_fn, x_seq, u_seq, du_seq):
     return cost2go
 
 
+import numpy.random as nr
+
+class OUNoise:
+    """docstring for OUNoise"""
+    def __init__(self,action_dimension,mu=0, theta=0.15, sigma=0.3):
+        self.action_dimension = action_dimension
+        self.mu = mu
+        self.theta = theta
+        self.sigma = sigma
+        self.state = np.ones(self.action_dimension) * self.mu
+        self.reset()
+
+    def reset(self):
+        self.state = np.ones(self.action_dimension) * self.mu
+
+    def noise(self):
+        x = self.state
+        dx = self.theta * (self.mu - x) + self.sigma * nr.randn(len(x))
+        self.state = x + dx
+        return self.state
+
+
 def mppi_step(f_fn, G_fn, q_fn, R, rho, nu, lamd, delta_t, x_0, u_seq, K):
 
     N, u_dim = u_seq.shape #N = timesteps
 
     # Generatinig random control variations
     epsilons = np.random.normal(size=(K, N, u_dim)) #K = number of trajectories
+    # noise = OUNoise(action_dimension=u_dim, sigma=1.0, theta=0.15)
+    # for j in range(K):
+    #     for i in range(N-1):
+    #         epsilons[j,i] = noise.noise()
+    # for j in range(K):
+    #     epsilons[j] = (j % 2) - 0.5
+    #     print("eps: ", epsilons[j])
+
     dus = (1.0 / np.sqrt(rho)) * (1.0 / np.sqrt(delta_t)) * epsilons #Eq.42
+
     S = np.zeros((K, N))
 
     def q_tilde_fn(x, u, du):
@@ -128,15 +159,15 @@ def mppi_step(f_fn, G_fn, q_fn, R, rho, nu, lamd, delta_t, x_0, u_seq, K):
     def q_raw_fn(x, u, du):
         return q_fn(x)
 
-    # Iterating through trajectories
+    ## Iterating through trajectories
     trajectories = []
     for i in range(K):
-        # Clipping controls
         u_perturbed = u_seq + dus[i]
-        u_perturbed = np.clip(u_perturbed, a_min=0, a_max=1.0)
-        dus[i] = u_perturbed - u_seq
+        ## Clipping controls
+        # u_perturbed = np.clip(u_perturbed, a_min=0, a_max=1.0)
+        # dus[i] = u_perturbed - u_seq
         # print("u_perturbed:", u_perturbed[0])
-        print("u_perturbed:", u_perturbed[0])
+        # print("dus:", dus[i])
 
         x_seq = rollout(x_0, f_fn, G_fn, u_perturbed, delta_t)
         #Computing costs-to-go for each trajectory
@@ -144,8 +175,8 @@ def mppi_step(f_fn, G_fn, q_fn, R, rho, nu, lamd, delta_t, x_0, u_seq, K):
         trajectories.append(x_seq)
 
     # Computing weights for trajectories
-    expS = np.exp((-1.0/lamd) * S) + EPS # (K, N) = (traj_num,timelen)
-    denom = np.sum(expS, axis=0) # (N) = (timelen)
+    expS = np.exp((-1.0/lamd) * S) + EPS  # (K, N) = (traj_num,timelen)
+    denom = np.sum(expS, axis=0) + EPS # (N) = (timelen)
     
     # Weighting trajectories to find control updates
     du_weighted = expS[:,:,None] * dus # (K, N, udim)
@@ -275,7 +306,7 @@ State: [xyz, Vxyz, R, Omega, Goal_xyz] = [3, 3, 9, 3, 3] = 21d
 
 def dynamics_test():
     dynamics = QuadrotorDynamics()
-    env = QuadrotorEnv(
+    env = AffineQuadrotorEnv(
         raw_control=False, 
         raw_control_zero_middle=False, 
         dim_mode='3D', 
@@ -348,7 +379,7 @@ def dynamics_test():
 
 def mppi_test():
     # dynamics = QuadrotorDynamics()
-    env = QuadrotorEnv(
+    env = AffineQuadrotorEnv(
         raw_control=True, 
         raw_control_zero_middle=False, 
         dim_mode='1D', 
@@ -396,9 +427,9 @@ def mppi_test():
         # print(xyz, goal)
 
         dist_cost = \
-            100. * (goal[0] - xyz[0]) ** 10 + \
-            100. * (goal[1] - xyz[1]) ** 10+ \
-            100. * (goal[2] - xyz[2]) ** 10 
+            3. * (goal[0] - xyz[0]) ** 2 + \
+            3. * (goal[1] - xyz[1]) ** 2 + \
+            3. * (goal[2] - xyz[2]) ** 2 
 
         # dist_cost = 10 * np.linalg.norm(goal - xyz)
 
@@ -410,21 +441,22 @@ def mppi_test():
 
     # inverse variance of noise relative to control
     # if large, we generate small noise to system
-    rho =  0.001
+    rho =  1.
     # rho = 1.
 
     # PSD quadratic form matrix of control cost
     #R = 1e-1 * np.eye(2)
-    R = np.zeros((N_u,N_u))
+    R = np.ones((N_u,N_u))
 
     # exploration weight. nu == 1.0 - no penalty for exploration
     # exploration cost = 0.5*(1-1/nu) * du^T * R * du
-    nu = 1.0
+    nu = 0.5
 
     # temperature -
     # if large, we don't really care about reward that much
     # if small, we sharpen
-    lamd = 4e0
+    # lamd = 4e0
+    lamd = 0.1
 
     # integration step
     delta_t = env.dt * env.sim_steps
@@ -447,7 +479,7 @@ def mppi_test():
 
     s_history = []
     render = True
-    render_each = 10
+    render_each = 5
     traj_fig_id = 1
 
     plot_figures = True
@@ -465,10 +497,10 @@ def mppi_test():
 
         # Computing control sequence
 
-        # Clipping controls
+        # Rolling and Clipping controls
         u_seq = np.roll(u_seq, -u_steps, axis=0)
         u_seq[-u_steps:] = u_seq[-(u_steps + 1)]
-        u_seq = np.clip(u_seq, a_min=0., a_max=1.)
+        # u_seq = np.clip(u_seq, a_min=0., a_max=1.)
         
         # MPPI
         u_seq, mppi_traj, traj_costs = mppi_step(env.dynamics.F, env.dynamics.G, q, R, rho, nu, lamd, delta_t, s, u_seq, K)
