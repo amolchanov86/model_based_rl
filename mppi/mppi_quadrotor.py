@@ -36,6 +36,7 @@ import matplotlib.pyplot as plt
 import matplotlib.patches as patches
 
 GRAV = 9.81 #m/s^2
+EPS = 1e-8
 
 ## TODO:
 # - quadrotor parameters should be synchronized (including time sted delta_t)
@@ -130,14 +131,20 @@ def mppi_step(f_fn, G_fn, q_fn, R, rho, nu, lamd, delta_t, x_0, u_seq, K):
     # Iterating through trajectories
     trajectories = []
     for i in range(K):
+        # Clipping controls
         u_perturbed = u_seq + dus[i]
+        u_perturbed = np.clip(u_perturbed, a_min=0, a_max=1.0)
+        dus[i] = u_perturbed - u_seq
+        # print("u_perturbed:", u_perturbed[0])
+        print("u_perturbed:", u_perturbed[0])
+
         x_seq = rollout(x_0, f_fn, G_fn, u_perturbed, delta_t)
         #Computing costs-to-go for each trajectory
         S[i] = S_tilde(q_tilde_fn, x_seq, u_seq, dus[i]) #S.shape == (K,N)
         trajectories.append(x_seq)
 
     # Computing weights for trajectories
-    expS = np.exp((-1.0/lamd) * S) # (K, N) = (traj_num,timelen)
+    expS = np.exp((-1.0/lamd) * S) + EPS # (K, N) = (traj_num,timelen)
     denom = np.sum(expS, axis=0) # (N) = (timelen)
     
     # Weighting trajectories to find control updates
@@ -145,7 +152,7 @@ def mppi_step(f_fn, G_fn, q_fn, R, rho, nu, lamd, delta_t, x_0, u_seq, K):
     u_change_unscaled = np.sum(du_weighted, axis=0) # (N, udim): averaging among traj.
     u_change = u_change_unscaled / denom[:,None] # (N, udim)
 
-    return u_seq + u_change, trajectories
+    return u_seq + u_change, trajectories, S
 
 
 
@@ -344,25 +351,67 @@ def mppi_test():
     env = QuadrotorEnv(
         raw_control=True, 
         raw_control_zero_middle=False, 
-        dim_mode='3D', 
+        dim_mode='1D', 
         tf_control=False, 
         sim_steps=1,
         ep_time=10)
     s = env.reset()
     N_u = env.action_space.low.shape[0]
 
-    # arbitrary state-dependent cost, i.e.
-    # no assumptions on the cost
+    ##########################
+    ## Arbitrary state-dependent cost, i.e. no assumptions on the cost
+
+    # My simple cost: penalty for distance and speed
+    # def q(x):
+    #     xyz = x[0:3]
+    #     Vxyz = x[3:6]
+    #     goal = x[-3:]
+    #     dist_cost = np.linalg.norm(xyz - goal)
+    #     vel_cost = np.linalg.norm(Vxyz)
+    #     return dist_cost + 0.1 * vel_cost
+
+    # The cost from the paper
+    # with addition to stabilize vertical direction by 
+    # using projection of quad's z axis onto world's z-axis (Rzz)
+    # def q(x):
+    #     xyz = x[0:3]
+    #     Vxyz = x[3:6]
+    #     goal = x[-3:]
+    #     rot = x[6:15].reshape([3,3])
+
+    #     dist_cost = \
+    #         2.5 * (goal[0] - xyz[0]) ** 2 + \
+    #         2.5 * (goal[1] - xyz[1]) ** 2 + \
+    #         150 * (goal[2] - xyz[2]) ** 2 
+
+    #     vel_cost = np.linalg.norm(Vxyz)
+    #     return dist_cost + vel_cost
+
     def q(x):
         xyz = x[0:3]
+        Vxyz = x[3:6]
         goal = x[-3:]
-        dist_cost = np.linalg.norm(xyz - goal)
-        return dist_cost 
+        rot = x[6:15].reshape([3,3])
+
+        # print(xyz, goal)
+
+        dist_cost = \
+            100. * (goal[0] - xyz[0]) ** 10 + \
+            100. * (goal[1] - xyz[1]) ** 10+ \
+            100. * (goal[2] - xyz[2]) ** 10 
+
+        # dist_cost = 10 * np.linalg.norm(goal - xyz)
+
+        vel_cost = np.linalg.norm(Vxyz)
+
+        orient_cost = 1. - rot[2,2]
+
+        return dist_cost + vel_cost + orient_cost
 
     # inverse variance of noise relative to control
     # if large, we generate small noise to system
-    # rho = 1e-1
-    rho = 1.
+    rho =  0.001
+    # rho = 1.
 
     # PSD quadratic form matrix of control cost
     #R = 1e-1 * np.eye(2)
@@ -381,10 +430,11 @@ def mppi_test():
     delta_t = env.dt * env.sim_steps
 
     # time horizon
-    N = 20
+    N = 30
 
     # initial control sequence
     u_seq = 0.5 * np.ones((N, N_u))
+    u_steps = 1 #number of steps to execute
 
     # number of trajectories to sample
     K = 100
@@ -414,10 +464,20 @@ def mppi_test():
         if render and (t % render_each == 0): env.render()
 
         # Computing control sequence
-        u_seq, mppi_traj = mppi_step(env.dynamics.F, env.dynamics.G, q, R, rho, nu, lamd, delta_t, s, u_seq, K)
+
+        # Clipping controls
+        u_seq = np.roll(u_seq, -u_steps, axis=0)
+        u_seq[-u_steps:] = u_seq[-(u_steps + 1)]
+        u_seq = np.clip(u_seq, a_min=0., a_max=1.)
+        
+        # MPPI
+        u_seq, mppi_traj, traj_costs = mppi_step(env.dynamics.F, env.dynamics.G, q, R, rho, nu, lamd, delta_t, s, u_seq, K)
 
         # Running env step
-        s, r, done, info = env.step(u_seq[0,:])
+        for step in range(u_steps):
+            # u_seq[step,:] = 0
+            s, r, done, info = env.step(u_seq[step,:])
+            print("U: ", u_seq[step,:])
 
         # Running prediction
         s_horizon = rollout(s, env.dynamics.F, env.dynamics.G, u_seq, delta_t)
@@ -426,14 +486,23 @@ def mppi_test():
         if plot_figures and t % plot_every == 0:
             fig = plt.figure(traj_fig_id)
             plt.cla()
+            # Plotting all sampled trajectories
+            max_cost = np.max(traj_costs[:,0])
+            min_cost = np.min(traj_costs[:,0])
+            for i in range(K):
+                # The higher the cost the thinner the line
+                ax.plot(mppi_traj[i][:,0], mppi_traj[i][:,1], mppi_traj[i][:,2], 
+                    linewidth=(1 - traj_costs[i,0]/max_cost + EPS), 
+                    color="grey")
+            ax.set_title("Min/Max costs: %.3f / %.3f" % (min_cost,max_cost))
+
+            # Plotting the optimal trajectory
             ax.set_xlim([-plot_xyzlim,plot_xyzlim])
             ax.set_ylim([-plot_xyzlim,plot_xyzlim])
-            ax.set_zlim([0,plot_xyzlim])
+            ax.set_zlim([0,2*plot_xyzlim])
             ax.scatter(s[-3],s[-2],s[-1], s=25, c="g", marker="o")
             ax.scatter([s[0]],[s[1]],[s[2]], s=25, c="r", marker="^")
             ax.plot(s_horizon[:,0], s_horizon[:,1], s_horizon[:,2])
-            for i in range(K):
-                ax.plot(mppi_traj[i][:,0], mppi_traj[i][:,1], mppi_traj[i][:,2], linewidth=0.1)
 
             plt.draw()
             plt.pause(0.05)

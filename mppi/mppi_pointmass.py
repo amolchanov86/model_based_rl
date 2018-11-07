@@ -11,6 +11,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches
 
+EPS = 1e-6
 
 def rollout(x_0, f_fn, G_fn, u_seq, delta_t):
     N = u_seq.shape[0] # u_seq.shape = (N,u_dim), where N = timesteps
@@ -74,11 +75,13 @@ def mppi_step(f_fn, G_fn, q_fn, R, rho, nu, lamd, delta_t, x_0, u_seq, K):
         return q_fn(x)
 
     # Iterating through trajectories
+    traj = []
     for i in range(K):
         u_perturbed = u_seq + dus[i]
         x_seq = rollout(x_0, f_fn, G_fn, u_perturbed, delta_t)
         #Computing costs-to-go for each trajectory
         S[i] = S_tilde(q_tilde_fn, x_seq, u_seq, dus[i]) #S.shape == (K,N)
+        traj.append(x_seq)
 
     # Computing weights for trajectories
     expS = np.exp((-1.0/lamd) * S) # (K, N) = (traj_num,timelen)
@@ -89,7 +92,7 @@ def mppi_step(f_fn, G_fn, q_fn, R, rho, nu, lamd, delta_t, x_0, u_seq, K):
     u_change_unscaled = np.sum(du_weighted, axis=0) # (N, udim): averaging among traj.
     u_change = u_change_unscaled / denom[:,None] # (N, udim)
 
-    return u_seq + u_change
+    return u_seq + u_change, traj, S
 
 
 """
@@ -154,7 +157,7 @@ def mppi_test():
     x = np.concatenate([init, np.zeros(2)])
 
     # time horizon
-    N = 20
+    N = 10
 
     # initial control sequence
     u_seq = np.zeros((N, 2))
@@ -184,7 +187,7 @@ def mppi_test():
             print("collided with obstacle!")
             break
 
-        u_seq = mppi_step(f, G, q, R, rho, nu, lamd, delta_t, x, u_seq, K)
+        u_seq, mppi_traj, traj_costs = mppi_step(f, G, q, R, rho, nu, lamd, delta_t, x, u_seq, K)
 
         x_horizon = rollout(x, f, G, u_seq, delta_t)
 
@@ -201,13 +204,25 @@ def mppi_test():
 
         plt.clf()
         plt.hold(True)
+
+        max_cost = np.max(traj_costs[:,0])
+        min_cost = np.min(traj_costs[:,0])
+        for i in range(K):
+            # The higher the cost the thinner the line
+            plt.plot(mppi_traj[i][:,0], mppi_traj[i][:,1], 
+                linewidth=(1 - traj_costs[i,0]/max_cost + EPS), 
+                color="grey")
+            # print("Traj: ", mppi_traj[i][:,0])
+
         rect = patches.Rectangle((-2, -2), 2, 2, facecolor=(0, 0, 0))
         plt.gca().add_patch(rect)
         plt.plot(x_past[:,0], x_past[:,1], color=(.8, .2, .2), linestyle='-.')
         plt.plot(x_horizon[:,0], x_horizon[:,1], color=(0, 0, 1), linestyle='-.', linewidth=3)
         plt.axis("equal")
-        #plt.xlim([-2, 2])
-        #plt.ylim([-2, 2])
+        plt.title("Min/Max costs: %.3f / %.3f" % (min_cost,max_cost))
+
+        plt.xlim([-1.5, 1.5])
+        plt.ylim([-1.5, 1.5])
 
         plt.show(block=False)
         plt.pause(0.01)
