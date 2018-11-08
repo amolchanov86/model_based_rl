@@ -14,6 +14,7 @@ import matplotlib.patches as patches
 
 EPS = 1e-6
 s_dim =  3 #state dimensions
+GRAV = 9.81
 
 def rollout(x_0, f_fn, G_fn, u_seq, delta_t):
     N = u_seq.shape[0] # u_seq.shape = (N,u_dim), where N = timesteps
@@ -21,6 +22,19 @@ def rollout(x_0, f_fn, G_fn, u_seq, delta_t):
     x_out = np.zeros((N, x_dim)) #trajectory, i.e. (timesteps, x_dim)
     x = 0 + x_0 #???
     for i, u in enumerate(u_seq):
+        x_out[i] = x
+        x += delta_t * (f_fn(x) + G_fn(x) @ u)
+    return x_out
+
+
+def rollout_real(x_0, f_fn, G_fn, u_seq, delta_t, u_min=-11, u_max=11):
+    u_seq_clipped = np.clip(u_seq, a_min=u_min, a_max=u_max)
+    N = u_seq.shape[0] # u_seq.shape = (N,u_dim), where N = timesteps
+    x_dim = x_0.shape[0]
+    x_out = np.zeros((N, x_dim)) #trajectory, i.e. (timesteps, x_dim)
+    x = 0 + x_0 #???
+    for i, u in enumerate(u_seq_clipped):
+        # print("U:", u)
         x_out[i] = x
         x += delta_t * (f_fn(x) + G_fn(x) @ u)
     return x_out
@@ -85,7 +99,7 @@ def mppi_step(f_fn, G_fn, q_fn, R, rho, nu, lamd, delta_t, x_0, u_seq, K):
         # dus[i] = u_perturbed - u_seq
         # print("u_perturbed:", u_perturbed[0])
         # print("dus:", dus[i])
-        
+
         x_seq = rollout(x_0, f_fn, G_fn, u_perturbed, delta_t)
         #Computing costs-to-go for each trajectory
         S[i] = S_tilde(q_tilde_fn, x_seq, u_seq, dus[i]) #S.shape == (K,N)
@@ -145,20 +159,18 @@ def draw_wall(ax, x_range, y_range, z_range):
     ax.plot_surface(xx, y_max, zz, color="r", alpha=0.2)
 
 """
-Scenario: guide point mass around corner.
-Initial position is (1, -1)
-Goal position is (-1, 1)
-Negative quadrant is obstacle (x < 0 && y < 0)
+Scenario: guide point mass under gravity with a wall obstacle
 Control cost is identity
 Reward is distance from goal squared
 State: [x, y, dx, dy]
 """
 def mppi_test():
+    grav_force=np.array([0.,0.,-GRAV])
 
     # unforced dynamics (integrator, damping_deceleration)
     def f(x):
         vel = x[s_dim:]
-        return np.concatenate([vel, -0.02*vel])
+        return np.concatenate([vel, -0.02*vel+grav_force])
 
     # control affine dynamics (controlling acceleration only)
     def G(x):
@@ -210,6 +222,7 @@ def mppi_test():
     N = 10
 
     N_u = 3 #Fx,Fy,Fz
+    u_min,u_max=-12,12
     # initial control sequence
     u_seq = np.zeros((N, N_u))
 
@@ -241,12 +254,13 @@ def mppi_test():
 
         u_seq, mppi_traj, traj_costs = mppi_step(f, G, q, R, rho, nu, lamd, delta_t, x, u_seq, K)
 
-        x_horizon = rollout(x, f, G, u_seq, delta_t)
+        ## Real-system trajectory prediction
+        x_horizon = rollout_real(x, f, G, u_seq, delta_t, u_min=u_min, u_max=u_max)
 
+        ## Real-system step
         u = u_seq[0,:]
-        #u[u < -1] = -1
-        #u[u > 1] = 1
-        dx = f(x) + G(x) @ u
+        u_clipped = np.clip(u, a_min=u_min, a_max=u_max)
+        dx = f(x) + G(x) @ u_clipped
         x += delta_t * dx
 
         x_past = np.stack(x_history)
