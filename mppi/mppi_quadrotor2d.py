@@ -15,7 +15,8 @@ import copy
 
 EPS = 1e-6
 s_dim =  3 #state dimensions
-GRAV = 9.81
+# GRAV = 9.81
+GRAV = 0.
 
 def rollout(x_0, f_fn, G_fn, u_seq, delta_t):
     N = u_seq.shape[0] # u_seq.shape = (N,u_dim), where N = timesteps
@@ -73,8 +74,8 @@ def S_tilde(q_fn, x_seq, u_seq, du_seq):
     Qs = np.array([q_fn(x, u, du)
         for x, u, du in zip(x_seq, u_seq, du_seq)])
     # cumsum() == cumulative sum, i.e. sum of all elements up until the current element
-    cost2go = Qs[::-1].cumsum()[::-1]
-    # cost2go = Qs.cumsum()
+    # cost2go = Qs[::-1].cumsum()[::-1]
+    cost2go = Qs.cumsum()
     return cost2go
 
 
@@ -123,60 +124,36 @@ w_x = .25
 w_y = 1.
 w_z = .5
 def collision_check(s):
-    wall_high = np.array([w_x, w_y, w_z])[:s_dim]
-    wall_low = -wall_high
-    return np.all(s[:s_dim] < wall_high) and np.all(s[:s_dim] > wall_low)
+    return False
+    # wall_high = np.array([w_x, w_y, w_z])[:s_dim]
+    # wall_low = -wall_high
+    # return np.all(s[:2] < wall_high) and np.all(s[:2] > wall_low)
    
 
 # draw rect
-def draw_wall(ax, x_range, y_range, z_range):
+def draw_wall(ax, x_range, y_range):
     # TODO: refactor this to use an iterotor
-    xx, yy = np.meshgrid(x_range, y_range)
-    z_min = z_range[0] * np.ones_like(xx)
-    z_max = z_range[1] * np.ones_like(xx)
-    ax.plot_wireframe(xx, yy, z_min, color="r")
-    ax.plot_surface(xx, yy, z_min, color="r", alpha=0.2)
-    ax.plot_wireframe(xx, yy, z_max, color="r")
-    ax.plot_surface(xx, yy, z_max, color="r", alpha=0.2)
-
-    yy, zz = np.meshgrid(y_range, z_range)
-    x_min = x_range[0] * np.ones_like(yy)
-    x_max = x_range[1] * np.ones_like(yy)
-    ax.plot_wireframe(x_min, yy, zz, color="r")
-    ax.plot_surface(x_min, yy, zz, color="r", alpha=0.2)
-    ax.plot_wireframe(x_max, yy, zz, color="r")
-    ax.plot_surface(x_max, yy, zz, color="r", alpha=0.2)
-
-
-    xx, zz = np.meshgrid(x_range, z_range)
-    y_min = y_range[0] * np.ones_like(yy)
-    y_max = y_range[1] * np.ones_like(yy)
-    ax.plot_wireframe(xx, y_min, zz, color="r")
-    ax.plot_surface(xx, y_min, zz, color="r", alpha=0.2)
-    ax.plot_wireframe(xx, y_max, zz, color="r")
-    ax.plot_surface(xx, y_max, zz, color="r", alpha=0.2)
+    rect_w = x_range[1] - x_range[0]
+    rect_h = y_range[1] - y_range[0]
+    rect = patches.Rectangle((x_range[0], y_range[0]), rect_w, rect_h, facecolor=(0, 0, 0))
+    ax.add_patch(rect)
 
 # draw rect
 def draw_quad(ax, xyz, rot, scale):
-    ax.scatter([xyz[0]],[xyz[1]],[xyz[2]], s=25, c="r", marker="^")
+    ax.scatter([xyz[0]],[xyz[1]], s=25, c="r", marker="^")
     x_axis = rot[:,0]
     y_axis = rot[:,1]
-    z_axis = rot[:,2]
     ax.plot(
         [xyz[0], xyz[0] + scale*x_axis[0]], 
         [xyz[1], xyz[1] + scale*x_axis[1]], 
-        [xyz[2], xyz[2] + scale*x_axis[2]], color='red', alpha=0.8, lw=3)
+        color='red', alpha=0.8, lw=3)
     ax.plot(
         [xyz[0], xyz[0] + scale*y_axis[0]], 
         [xyz[1], xyz[1] + scale*y_axis[1]], 
-        [xyz[2], xyz[2] + scale*y_axis[2]], color='green', alpha=0.8, lw=3)
-    ax.plot(
-        [xyz[0], xyz[0] + scale*z_axis[0]], 
-        [xyz[1], xyz[1] + scale*z_axis[1]], 
-        [xyz[2], xyz[2] + scale*z_axis[2]], color='blue', alpha=0.8, lw=3)
+        color='green', alpha=0.8, lw=3)
 
 
-class AffineQuadrotorDynamics(object):
+class AffineQuadrotorDynamics2D(object):
     """
     State: [xyz,Vxyz,Euler,Omega] = 12-d
       Where: Omega - angular rates in the body frame
@@ -190,60 +167,48 @@ class AffineQuadrotorDynamics(object):
         ## PARAMETERS
         self.mass = 0.5
         self.arm_length = 0.33 / 2.0
-        self.inertia = self.mass * np.array([0.01, 0.01, 0.02])
+        self.inertia = self.mass * 0.01
 
         self.thrust_to_weight = 2.0
         self.vel_damp = 0.001
-        # self.damp_omega = 0.015
-        self.damp_omega = 0.0
+        self.damp_omega = 0.015
+        # self.damp_omega = 0.0
         self.torque_to_thrust=0.05
 
-        self.Fmax = GRAV * self.mass * self.thrust_to_weight / 4.0
-        self.Tmax = self.torque_to_thrust * self.Fmax 
+        self.Fmax = 9.81 * self.mass * self.thrust_to_weight / 2.0
 
         ###############################
         # Auxiliarry matrices
-        self.thrust_sum_mx = np.zeros([3,4]) # [0,0,F_sum].T
-        self.thrust_sum_mx[2,:] = 1# [0,0,F_sum].T
+        self.thrust_sum_mx = np.zeros([2,2]) # [0,0,F_sum].T
+        self.thrust_sum_mx[1,:] = 1# [0,0,F_sum].T
 
         FA = self.arm_length*self.Fmax
-        Tmax = self.Tmax
         self.M_omega = np.array([
-            [ 0.,   FA,   0., -FA],
-            [-FA,   0.,   FA,   0.],
-            [ Tmax,-Tmax, Tmax,-Tmax]])
-        self.M_omega = (1.0 / self.inertia)[:,None] * self.M_omega
+            [ -FA,   FA]])
+        self.M_omega = (1.0 / self.inertia) * self.M_omega
 
-        self.zero3x4 = np.zeros([3,4])
+        self.zero2x2 = np.zeros([2,2])
+        self.zero1x2 = np.zeros([1,2])
 
-        self.s_dim = 12
-        self.N_u = 4
+        self.s_dim = 6
+        self.N_u = 2
+        self.pos_dim = 2
+
 
     @staticmethod
     def R(s):
-        euler = s[6:9]
-
-        roll,pitch,yaw = euler[0],euler[1],euler[2]
-        cf = np.cos(roll)
-        sf = np.sin(roll)
-        c0 = np.cos(roll)
-        s0 = np.sin(pitch)
-        cw = np.cos(yaw)
-        sw = np.sin(yaw)
-
+        tilt = s[4]
         rot = np.array([
-            [cw*c0 - sf*sw*s0, -cf*sw, cw*s0 + c0*sf*sw],
-            [c0*sw + cw*sf*s0,  cf*cw, sw*s0 - cw*c0*sf],
-            [          -cf*s0,     sf,            cf*c0]
-            ])
+            [np.cos(tilt), -np.sin(tilt)],
+            [np.sin(tilt),  np.cos(tilt)]])
         return rot
 
     # unforced dynamics (integrator, damping_deceleration)
     def F(self, s):
-        xyz  = s[0:3]
-        Vxyz = s[3:6]
-        euler = s[6:9]
-        omega = s[9:12]
+        xyz  = s[0:2]
+        Vxyz = s[2:4]
+        euler = s[4]
+        omega = s[5]
 
         ###############################
         ## Linear position change
@@ -251,38 +216,29 @@ class AffineQuadrotorDynamics(object):
 
         ###############################
         ## Linear velocity change
-        dV = -self.vel_damp * Vxyz + np.array([0, 0, -GRAV])
+        dV = -self.vel_damp * Vxyz + np.array([0, -GRAV])
 
         ###############################
         ## Euler angles change
-        roll,pitch,yaw = euler[0],euler[1],euler[2]
-        cos_roll = np.cos(roll)
-        sin_roll = np.sin(roll)
-        cos_pitch = np.cos(roll)
-        sin_pitch = np.sin(pitch)
-        O2E = np.array([
-            [cos_pitch, 0, -cos_roll*sin_pitch],
-            [        0, 1,  sin_roll],
-            [sin_pitch, 0,  cos_roll*cos_pitch]
-            ])
-        dE = np.linalg.inv(O2E) @ omega
+        dE = copy.deepcopy(omega)
 
         ###############################
         ## Angular rate change
-        F_omega = (1.0 / self.inertia) * (np.cross(-omega, self.inertia * omega))
         omega_damp_quadratic = np.clip(self.damp_omega * omega ** 2, a_min=0.0, a_max=1.0)
-        dOmega = (1.0 - omega_damp_quadratic) * F_omega
+        dOmega = - omega_damp_quadratic * omega
 
-        return np.concatenate([dx, dV, dE, dOmega])
+        # print(dx,dV,dE,dOmega)
+
+        return np.concatenate([dx, dV, [dE], [dOmega]])
 
 
     # control affine dynamics (controlling acceleration only)
     # Output: [3,4]
     def G(self, s):
-        xyz  = s[0:3]
-        Vxyz = s[3:6]
-        euler = s[6:9]
-        omega = s[9:12]
+        xyz  = s[0:2]
+        Vxyz = s[2:4]
+        euler = s[4]
+        omega = s[5]
 
         ###############################
         ## Rotation matrix
@@ -290,15 +246,16 @@ class AffineQuadrotorDynamics(object):
 
         ###############################
         ## dx, dV, dE
-        dx = self.zero3x4
+        dx = self.zero2x2
         dV = (rot / self.mass) @ (self.Fmax * self.thrust_sum_mx)
-        dE = self.zero3x4
+        dE = self.zero1x2
         
         ###############################
         ## Angular acceleration
-        omega_damp_quadratic = np.clip(self.damp_omega * omega ** 2, a_min=0.0, a_max=1.0)
-        dOmega = (1.0 - omega_damp_quadratic)[:,None] * self.M_omega
+        # omega_damp_quadratic = np.clip(self.damp_omega * omega ** 2, a_min=0.0, a_max=1.0)
+        dOmega = self.M_omega
         
+        # print(dx.shape,dV.shape,dE.shape,dOmega.shape)
         return np.concatenate([dx, dV, dE, dOmega], axis=0)
 
 
@@ -311,12 +268,13 @@ State: [x, y, z, Vx, Vy, Vz]
 def mppi_test():
     grav_force=np.array([0.,0.,-GRAV])
 
-    dynamics = AffineQuadrotorDynamics()
+    dynamics = AffineQuadrotorDynamics2D()
 
     goal = np.zeros(3)
     init = np.zeros(dynamics.s_dim)
     goal[0] = 1.
     init[0] = -1.
+    init[4] = 45./180.*np.pi
 
     # arbitrary state-dependent cost, i.e.
     # no assumptions on the cost
@@ -336,8 +294,7 @@ def mppi_test():
 
     # inverse variance of noise relative to control
     # if large, we generate small noise to system
-    rho = 1.
-
+    rho = 1000.
     # exploration weight. nu == 1.0 - no penalty for exploration
     # exploration cost = 0.5*(1-1/nu) * du^T * R * du
     nu = 1.0
@@ -366,7 +323,7 @@ def mppi_test():
     R = np.zeros((N_u,N_u))
 
     # number of trajectories to sample
-    K = 50
+    K = 100
 
     x_history = []
 
@@ -380,10 +337,10 @@ def mppi_test():
 
     plot_figures = True
     plot_xyzlim = 2
-    plot_every = 5
+    plot_every = 2
     if plot_figures:
         fig = plt.figure(traj_fig_id, figsize=(10, 10))
-        ax = fig.add_subplot(111, projection='3d') 
+        ax = fig.add_subplot(111) 
         plt.show(block=False)
 
     t = 0
@@ -398,6 +355,7 @@ def mppi_test():
 
         ## Real-system step
         u = u_seq[0,:]
+        # u = np.array([1.,1.])
         u_clipped = np.clip(u, a_min=u_min, a_max=u_max)
         dx = dynamics.F(x) + dynamics.G(x) @ u_clipped
         x += delta_t * dx
@@ -418,7 +376,7 @@ def mppi_test():
             min_cost = np.min(traj_costs[:,0])
             for i in range(K):
                 # The higher the cost the thinner the line
-                ax.plot(mppi_traj[i][:,0], mppi_traj[i][:,1], mppi_traj[i][:,2], 
+                ax.plot(mppi_traj[i][:,0], mppi_traj[i][:,1], 
                     linewidth=(1 - traj_costs[i,0]/max_cost + EPS), 
                     color="grey")
             ax.set_title("Min/Max costs: %.3f / %.3f" % (min_cost,max_cost))
@@ -426,18 +384,17 @@ def mppi_test():
             # Plotting the optimal trajectory
             ax.set_xlim([-plot_xyzlim,plot_xyzlim])
             ax.set_ylim([-plot_xyzlim,plot_xyzlim])
-            ax.set_zlim([0,2*plot_xyzlim])
             # ax.scatter(x[-3],x[-2],x[-1], s=25, c="g", marker="o")
             ## Plot goal
-            ax.scatter(goal[0],goal[1],goal[2], s=25, c="g", marker="o")
+            ax.scatter(goal[0],goal[1], s=25, c="g", marker="o")
             ## Plot quadrotor
             draw_quad(ax, x, dynamics.R(x), scale=0.1)
-            ax.plot(x_horizon[:,0], x_horizon[:,1], x_horizon[:,2])
+            ax.plot(x_horizon[:,0], x_horizon[:,1])
             ## Plot taken trajectory
-            ax.plot(x_past[:,0], x_past[:,1], x_past[:,2])
+            ax.plot(x_past[:,0], x_past[:,1])
 
             # Drawing the wall
-            draw_wall(ax=ax, x_range=[-w_x,w_x], y_range=[-w_y,w_y], z_range=[-w_z,w_z])
+            draw_wall(ax=ax, x_range=[-w_x,w_x], y_range=[-w_y,w_y])
 
             plt.draw()
             plt.pause(0.05)

@@ -56,6 +56,7 @@ def S_tilde(q_fn, x_seq, u_seq, du_seq):
     # cumsum() == cumulative sum, i.e. sum of all elements up until the current element
     cost2go = Qs[::-1].cumsum()[::-1]
     # cost2go = Qs.cumsum()
+    # print("cost2go.shape",cost2go.shape, "cost2go", cost2go)
     return cost2go
 
 
@@ -84,12 +85,15 @@ def mppi_step(f_fn, G_fn, q_fn, R, rho, nu, lamd, delta_t, x_0, u_seq, K):
         traj.append(x_seq)
 
     # Computing weights for trajectories
+    baseline = np.min(S[:,0])
+    S -= baseline
     expS = np.exp((-1.0/lamd) * S) # (K, N) = (traj_num,timelen)
     denom = np.sum(expS, axis=0) # (N) = (timelen)
     
     # Weighting trajectories to find control updates
     du_weighted = expS[:,:,None] * dus # (K, N, udim)
     u_change_unscaled = np.sum(du_weighted, axis=0) # (N, udim): averaging among traj.
+    # print("expS/denom shape:", expS.shape, denom.shape, u_change_unscaled.shape)
     u_change = u_change_unscaled / denom[:,None] # (N, udim)
 
     return u_seq + u_change, traj, S
@@ -130,6 +134,7 @@ def mppi_test():
         soft_negativeness = 0.0* np.exp(-5* pos)
         collision_soft = np.prod(soft_negativeness)
         qq = dist2 + collision_wall + collision_soft
+        # qq = dist2
         return 1e0 * qq
         #return dist2# + 1 * vel.T @ vel
 
@@ -139,11 +144,11 @@ def mppi_test():
 
     # PSD quadratic form matrix of control cost
     #R = 1e-1 * np.eye(2)
-    R = np.zeros((2,2))
+    R = 0.001 * np.eye(2)
 
     # exploration weight. nu == 1.0 - no penalty for exploration
     # exploration cost = 0.5*(1-1/nu) * du^T * R * du
-    nu = 1.0
+    nu = 1000.0
 
     # temperature -
     # if large, we don't really care about reward that much
@@ -157,7 +162,7 @@ def mppi_test():
     x = np.concatenate([init, np.zeros(2)])
 
     # time horizon
-    N = 10
+    N = 20
 
     # initial control sequence
     u_seq = np.zeros((N, 2))
@@ -207,10 +212,12 @@ def mppi_test():
 
         max_cost = np.max(traj_costs[:,0])
         min_cost = np.min(traj_costs[:,0])
+        mean_cost = np.mean(traj_costs[:,0])
+
         for i in range(K):
             # The higher the cost the thinner the line
             plt.plot(mppi_traj[i][:,0], mppi_traj[i][:,1], 
-                linewidth=(1 - traj_costs[i,0]/max_cost + EPS), 
+                linewidth=(1 - (traj_costs[i,0]/max_cost)**2 + EPS), 
                 color="grey")
             # print("Traj: ", mppi_traj[i][:,0])
 
@@ -218,8 +225,9 @@ def mppi_test():
         plt.gca().add_patch(rect)
         plt.plot(x_past[:,0], x_past[:,1], color=(.8, .2, .2), linestyle='-.')
         plt.plot(x_horizon[:,0], x_horizon[:,1], color=(0, 0, 1), linestyle='-.', linewidth=3)
+        plt.scatter(goal[0],goal[1], s=25, c="g", marker="o")
         plt.axis("equal")
-        plt.title("Min/Max costs: %.3f / %.3f" % (min_cost,max_cost))
+        plt.title("Min/Mean/Max/ costs: %.3f/ %.3f / %.3f" % (min_cost,mean_cost,max_cost))
 
         plt.xlim([-1.5, 1.5])
         plt.ylim([-1.5, 1.5])

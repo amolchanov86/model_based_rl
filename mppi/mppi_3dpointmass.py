@@ -122,12 +122,9 @@ w_x = .25
 w_y = 1.
 w_z = .5
 def collision_check(s):
-    w_x = .25
-    w_y = 1.
-    w_z = .5
-    wall_high = np.array([w_x, w_y, w_z])[:s_dim]
+    wall_high = np.array([w_x, w_y, w_z])[:3]
     wall_low = -wall_high
-    return np.all(s[:s_dim] < wall_high) and np.all(s[:s_dim] > wall_low)
+    return np.all(s[:3] < wall_high) and np.all(s[:3] > wall_low)
    
 
 # draw rect
@@ -162,7 +159,7 @@ def draw_wall(ax, x_range, y_range, z_range):
 Scenario: guide point mass under gravity with a wall obstacle
 Control cost is identity
 Reward is distance from goal squared
-State: [x, y, dx, dy]
+State: [x, y, z, Vx, Vy, Vz]
 """
 def mppi_test():
     grav_force=np.array([0.,0.,-GRAV])
@@ -197,15 +194,17 @@ def mppi_test():
 
     # inverse variance of noise relative to control
     # if large, we generate small noise to system
-    rho = 1e-1
+    rho = 0.8 * 1e-1
+    N_u = 3 #Fx,Fy,Fz
 
-    # PSD quadratic form matrix of control cost
-    #R = 1e-1 * np.eye(2)
-    R = np.zeros((s_dim,s_dim))
+    # PSD quadratic form 
+    # matrix of control cost
+    R = 1e-4 * np.eye(N_u)
+    # R = np.zeros((s_dim,s_dim))
 
     # exploration weight. nu == 1.0 - no penalty for exploration
     # exploration cost = 0.5*(1-1/nu) * du^T * R * du
-    nu = 1.0
+    nu = 1000.0
 
     # temperature -
     # if large, we don't really care about reward that much
@@ -221,8 +220,7 @@ def mppi_test():
     # time horizon
     N = 10
 
-    N_u = 3 #Fx,Fy,Fz
-    u_min,u_max=-12,12
+    u_min,u_max=-15,15
     # initial control sequence
     u_seq = np.zeros((N, N_u))
 
@@ -243,7 +241,7 @@ def mppi_test():
     plot_xyzlim = 2
     plot_every = 5
     if plot_figures:
-        fig = plt.figure(traj_fig_id)
+        fig = plt.figure(traj_fig_id, figsize=(10, 10))
         ax = fig.add_subplot(111, projection='3d') 
         plt.show(block=False)
 
