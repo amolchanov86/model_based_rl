@@ -25,3 +25,6 @@ git checkout release
 ./mppi/mppi_3dpointmass.py
 ```
 
+# Credit
+Special thanks to [James Preiss](https://robotics.usc.edu/~james/) for contributions to the repo
+
