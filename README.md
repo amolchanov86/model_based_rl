@@ -1,7 +1,7 @@
-# Model Based Control and Reinforcement Learning Tutorials
+# Model Based Control and <br /> Reinforcement Learning Tutorials
 
-A collection of simple and clean implementations of model-based control and reinforcement learning approaches.
-The implementations do not aim to be general enough, but rather easily understood, for learning/understanding purpose.
+A collection of simple and clean implementations of model-based control and reinforcement learning approaches.  
+The implementations do not aim to be general enough, but rather easily understood, for learning/understanding purpose.  
 Currently the collection includes:
 
 - [Model Predictive Path Integral (MPPI)](https://arc.aiaa.org/doi/10.2514/1.G001921) 
