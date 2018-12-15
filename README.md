@@ -10,6 +10,7 @@ Currently the collection includes:
 ```
 cd your_project_folder
 git clone https://github.com/amolchanov86/model_based_rl.git
+cd model_based_rl/
 git checkout release
 ```
 
