@@ -208,7 +208,7 @@ def mppi_test():
         u_seq[-1,:] = 0.0
 
         plt.clf()
-        plt.hold(True)
+        # plt.hold(True)
 
         max_cost = np.max(traj_costs[:,0])
         min_cost = np.min(traj_costs[:,0])
