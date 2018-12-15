@@ -6,13 +6,13 @@ Currently the collection includes:
 
 - [Model Predictive Path Integral (MPPI)](https://arc.aiaa.org/doi/10.2514/1.G001921) 
 
-# How to run
-- [MPPI 2D pointmass example]:
+# MPPI
+- Running 2D pointmass example:
 ```
 ./mppi/mppi_pointmass.py
 ```
 
-- [MPPI 3D pointmass example]:
+- Running 3D pointmass example:
 ```
 ./mppi/mppi_3dpointmass.py
 ```

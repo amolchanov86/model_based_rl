@@ -43,9 +43,9 @@ def q_tilde(q_fn, x, u, du, R, nu):
 def S_tilde(q_fn, x_seq, u_seq, du_seq):
     """
     Cost-to-go for each time step
-    NOTE: in the paper cost-to-go is computed as actually cost-so-far (accumulated cost):
+    NOTE: in the paper cost-to-go is computed as cost-so-far instead (accumulated cost):
     S_tilde(t+1) = S_tilde(t) + q_tilde
-    which is strange. Same thing happens in the rally paper: 
+    Which is incorrect, but works if the only thing you care is the total trajectory cost.
     https://arxiv.org/pdf/1707.04540.pdf
     """
     N = len(x_seq) # num of timesteps
@@ -55,8 +55,7 @@ def S_tilde(q_fn, x_seq, u_seq, du_seq):
         for x, u, du in zip(x_seq, u_seq, du_seq)])
     # cumsum() == cumulative sum, i.e. sum of all elements up until the current element
     cost2go = Qs[::-1].cumsum()[::-1]
-    # cost2go = Qs.cumsum()
-    # print("cost2go.shape",cost2go.shape, "cost2go", cost2go)
+    # cost2go = Qs.cumsum() ## This is the "official" version in the paper
     return cost2go
 
 
@@ -93,7 +92,6 @@ def mppi_step(f_fn, G_fn, q_fn, R, rho, nu, lamd, delta_t, x_0, u_seq, K):
     # Weighting trajectories to find control updates
     du_weighted = expS[:,:,None] * dus # (K, N, udim)
     u_change_unscaled = np.sum(du_weighted, axis=0) # (N, udim): averaging among traj.
-    # print("expS/denom shape:", expS.shape, denom.shape, u_change_unscaled.shape)
     u_change = u_change_unscaled / denom[:,None] # (N, udim)
 
     return u_seq + u_change, traj, S
@@ -101,11 +99,10 @@ def mppi_step(f_fn, G_fn, q_fn, R, rho, nu, lamd, delta_t, x_0, u_seq, K):
 
 """
 Scenario: guide point mass around corner.
-Initial position is (1, -1)
-Goal position is (-1, 1)
-Negative quadrant is obstacle (x < 0 && y < 0)
-Control cost is identity
-Reward is distance from goal squared
+Initial position: see init
+Goal position: see goal
+Control cost: see R
+Cost is distance from goal squared
 State: [x, y, dx, dy]
 """
 def mppi_test():
@@ -143,7 +140,6 @@ def mppi_test():
     rho = 1e-1
 
     # PSD quadratic form matrix of control cost
-    #R = 1e-1 * np.eye(2)
     R = 0.001 * np.eye(2)
 
     # exploration weight. nu == 1.0 - no penalty for exploration
@@ -176,8 +172,6 @@ def mppi_test():
 
     np.random.seed(0)
 
-    #import pdb; pdb.set_trace()
-
     np.seterr(all="raise")
 
     while True:
@@ -208,7 +202,6 @@ def mppi_test():
         u_seq[-1,:] = 0.0
 
         plt.clf()
-        # plt.hold(True)
 
         max_cost = np.max(traj_costs[:,0])
         min_cost = np.min(traj_costs[:,0])
@@ -219,12 +212,12 @@ def mppi_test():
             plt.plot(mppi_traj[i][:,0], mppi_traj[i][:,1], 
                 linewidth=(1 - (traj_costs[i,0]/max_cost)**2 + EPS), 
                 color="grey")
-            # print("Traj: ", mppi_traj[i][:,0])
+            # print("Traj: ", mppi_traj[i][:,0]) # Print trajectory for debugging
 
-        rect = patches.Rectangle((-2, -2), 2, 2, facecolor=(0, 0, 0))
+        rect = patches.Rectangle((-2, -2), 2, 2, facecolor=(0, 0, 0)) # Obstacle
         plt.gca().add_patch(rect)
-        plt.plot(x_past[:,0], x_past[:,1], color=(.8, .2, .2), linestyle='-.')
-        plt.plot(x_horizon[:,0], x_horizon[:,1], color=(0, 0, 1), linestyle='-.', linewidth=3)
+        plt.plot(x_past[:,0], x_past[:,1], color=(.8, .2, .2), linestyle='-.') # Sampled trajectories
+        plt.plot(x_horizon[:,0], x_horizon[:,1], color=(0, 0, 1), linestyle='-.', linewidth=3) # Optimal (weighted) trajectory
         plt.scatter(goal[0],goal[1], s=25, c="g", marker="o")
         plt.axis("equal")
         plt.title("Min/Mean/Max/ costs: %.3f/ %.3f / %.3f" % (min_cost,mean_cost,max_cost))
@@ -238,6 +231,5 @@ def mppi_test():
     plt.show()
 
 
-
-
+## RUN!
 mppi_test()

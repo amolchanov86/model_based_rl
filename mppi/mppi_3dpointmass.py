@@ -55,14 +55,13 @@ def q_tilde(q_fn, x, u, du, R, nu):
         0.5 * u.T @ R @ u
     )
 
-# TODO make faster all-steps-at-once matrix version of q_tilde
 def S_tilde(q_fn, x_seq, u_seq, du_seq):
     """
     Cost-to-go for each time step
     NOTE: in the paper cost-to-go is computed as actually cost-so-far (accumulated cost):
-    S_tilde(t+1) = S_tilde(t) + q_tilde
-    which is strange. Same thing happens in the rally paper: 
-    https://arxiv.org/pdf/1707.04540.pdf
+        S_tilde(t+1) = S_tilde(t) + q_tilde
+    See:
+        https://arxiv.org/pdf/1707.04540.pdf
     """
     N = len(x_seq) # num of timesteps
 
@@ -117,19 +116,26 @@ def mppi_step(f_fn, G_fn, q_fn, R, rho, nu, lamd, delta_t, x_0, u_seq, K):
     return u_seq + u_change, traj, S
 
 
-
+## Min/Max values of the wall obstacle, i.e. +/-w_xyz
 w_x = .25
 w_y = 1.
 w_z = .5
 def collision_check(s):
+    """
+    Checking collisions. 
+    Returns:
+     True if collision
+    """
     wall_high = np.array([w_x, w_y, w_z])[:3]
     wall_low = -wall_high
     return np.all(s[:3] < wall_high) and np.all(s[:3] > wall_low)
    
 
-# draw rect
 def draw_wall(ax, x_range, y_range, z_range):
-    # TODO: refactor this to use an iterotor
+    """
+    Draws wall obstacle (rectangle)
+    """
+    # TODO: refactor this to use an iterator
     xx, yy = np.meshgrid(x_range, y_range)
     z_min = z_range[0] * np.ones_like(xx)
     z_max = z_range[1] * np.ones_like(xx)
@@ -155,28 +161,32 @@ def draw_wall(ax, x_range, y_range, z_range):
     ax.plot_wireframe(xx, y_max, zz, color="r")
     ax.plot_surface(xx, y_max, zz, color="r", alpha=0.2)
 
-"""
-Scenario: guide point mass under gravity with a wall obstacle
-Control cost is identity
-Reward is distance from goal squared
-State: [x, y, z, Vx, Vy, Vz]
-"""
 def mppi_test():
+    """
+    Scenario: guide 3D point mass under gravity with a wall obstacle.
+    Control cost: see R matrix
+    Cost is distance from goal squared
+    State: [x, y, z, Vx, Vy, Vz]
+    """
     grav_force=np.array([0.,0.,-GRAV])
 
-    # unforced dynamics (integrator, damping_deceleration)
     def f(x):
+        """
+        Unforced dynamics (integrator, damping_deceleration)
+        """
         vel = x[s_dim:]
         return np.concatenate([vel, -0.02*vel+grav_force])
 
-    # control affine dynamics (controlling acceleration only)
     def G(x):
+        """
+        Forced affine dynamics (controlling acceleration only)
+        """
         return np.vstack([np.zeros((s_dim,s_dim)), np.eye(s_dim)])
 
-    goal = np.array([1., 0., 0.])
-    init = np.array([-1., 0., 0.])
+    goal = np.array([1., 0., 0.]) # Goal position
+    init = np.array([-1., 0., 0.]) # Initial position
 
-    # arbitrary state-dependent cost, i.e.
+    # Arbitrary state-dependent cost, i.e.
     # no assumptions on the cost
     def q(x):
         pos = x[:s_dim]
@@ -184,23 +194,24 @@ def mppi_test():
         delta = pos - goal
         dist2 = delta.T @ delta
         dist = np.sqrt(dist2)
-        collision_wall = 100.0 * collision_check(x)
+        collision_wall = 100.0 * collision_check(x) # Hard collision cost
 
         soft_negativeness = 0.0* np.exp(-5* pos)
-        collision_soft = np.prod(soft_negativeness)
+        collision_soft = np.prod(soft_negativeness) # Soft collision cost 
         qq = dist2 + collision_wall + collision_soft
+        
         return 1e0 * qq
         #return dist2# + 1 * vel.T @ vel
 
-    # inverse variance of noise relative to control
+    # Inverse variance of noise relative to control
     # if large, we generate small noise to system
     rho = 0.8 * 1e-1
+
+    # Number of control dimensions
     N_u = 3 #Fx,Fy,Fz
 
-    # PSD quadratic form 
-    # matrix of control cost
+    # PSD quadratic form: matrix of control cost
     R = 1e-4 * np.eye(N_u)
-    # R = np.zeros((s_dim,s_dim))
 
     # exploration weight. nu == 1.0 - no penalty for exploration
     # exploration cost = 0.5*(1-1/nu) * du^T * R * du
@@ -220,7 +231,9 @@ def mppi_test():
     # time horizon
     N = 10
 
+    # Control clipping on a "real" system
     u_min,u_max=-15,15
+
     # initial control sequence
     u_seq = np.zeros((N, N_u))
 
@@ -231,11 +244,9 @@ def mppi_test():
 
     np.random.seed(0)
 
-    #import pdb; pdb.set_trace()
-
     np.seterr(all="raise")
 
-    traj_fig_id = 1
+    traj_fig_id = 1 # ID of trajectory figure
 
     plot_figures = True
     plot_xyzlim = 2
@@ -247,9 +258,7 @@ def mppi_test():
 
     t = 0
     while True:
-
         x_history.append(0 + x)
-
         u_seq, mppi_traj, traj_costs = mppi_step(f, G, q, R, rho, nu, lamd, delta_t, x, u_seq, K)
 
         ## Real-system trajectory prediction
@@ -265,7 +274,6 @@ def mppi_test():
 
         u_seq[:-1,:] = u_seq[1:,:]
         u_seq[-1,:] = 0.0
-
 
         # Plotting predicted trajectory
         if plot_figures and t % plot_every == 0:
@@ -318,6 +326,5 @@ def mppi_test():
     plt.show()
 
 
-
-
+# RUN!
 mppi_test()
